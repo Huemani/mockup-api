@@ -67,21 +67,17 @@ def apply_displacement(design, dispmap_region, strength=15):
     # Padding size should be at least as large as max displacement
     pad = int(strength * 1.5)
 
-    # Pad the design with transparent pixels (or black if no alpha)
-    if design.shape[2] == 4:
-        # BGRA - pad with transparent
-        design_padded = cv2.copyMakeBorder(
-            design, pad, pad, pad, pad,
-            cv2.BORDER_CONSTANT,
-            value=(0, 0, 0, 0)
-        )
-    else:
-        # BGR - pad with black
-        design_padded = cv2.copyMakeBorder(
-            design, pad, pad, pad, pad,
-            cv2.BORDER_CONSTANT,
-            value=(0, 0, 0)
-        )
+    # ALWAYS convert to BGRA (with alpha) so padding can be transparent
+    if design.shape[2] == 3:
+        # BGR -> BGRA: Add full opacity alpha channel
+        design = cv2.cvtColor(design, cv2.COLOR_BGR2BGRA)
+
+    # Pad with fully transparent pixels
+    design_padded = cv2.copyMakeBorder(
+        design, pad, pad, pad, pad,
+        cv2.BORDER_CONSTANT,
+        value=(0, 0, 0, 0)  # Transparent
+    )
 
     # Pad the displacement map with neutral gray (128 = no displacement)
     dispmap_padded = cv2.copyMakeBorder(
@@ -108,19 +104,14 @@ def apply_displacement(design, dispmap_region, strength=15):
     map_y = y_coords + offsets
 
     # Remap with BICUBIC interpolation (high quality, smooth results)
-    # BORDER_CONSTANT with transparent/black for clean edges
-    if design.shape[2] == 4:
-        border_value = (0, 0, 0, 0)
-    else:
-        border_value = (0, 0, 0)
-
+    # BORDER_CONSTANT with transparent pixels for clean edges
     displaced_padded = cv2.remap(
         design_padded,
         map_x,
         map_y,
         interpolation=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=border_value
+        borderValue=(0, 0, 0, 0)  # Transparent
     )
 
     # Return the padded result (edges now warp into the padding area)
