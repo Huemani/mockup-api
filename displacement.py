@@ -46,6 +46,8 @@ def apply_displacement(design, dispmap_region, strength=15):
     This uses bicubic interpolation for smooth, high-quality results -
     unlike PixiJS which uses 8-bit pixel shifting.
 
+    IMPORTANT: Adds padding around design so edges can also warp!
+
     Args:
         design: Design image (BGR or BGRA with alpha)
         dispmap_region: Grayscale displacement map cropped to design region
@@ -53,7 +55,7 @@ def apply_displacement(design, dispmap_region, strength=15):
         strength: Displacement intensity in pixels (typically 10-20)
 
     Returns:
-        Displaced design image
+        Displaced design image (same size as input, edges will warp)
     """
     height, width = design.shape[:2]
 
@@ -61,14 +63,44 @@ def apply_displacement(design, dispmap_region, strength=15):
     if dispmap_region.shape[:2] != (height, width):
         dispmap_region = cv2.resize(dispmap_region, (width, height), interpolation=cv2.INTER_LINEAR)
 
-    # Create coordinate grids
-    y_coords, x_coords = np.mgrid[0:height, 0:width].astype(np.float32)
+    # Add padding around design so edges can warp
+    # Padding size should be at least as large as max displacement
+    pad = int(strength * 1.5)
+
+    # Pad the design with transparent pixels (or black if no alpha)
+    if design.shape[2] == 4:
+        # BGRA - pad with transparent
+        design_padded = cv2.copyMakeBorder(
+            design, pad, pad, pad, pad,
+            cv2.BORDER_CONSTANT,
+            value=(0, 0, 0, 0)
+        )
+    else:
+        # BGR - pad with black
+        design_padded = cv2.copyMakeBorder(
+            design, pad, pad, pad, pad,
+            cv2.BORDER_CONSTANT,
+            value=(0, 0, 0)
+        )
+
+    # Pad the displacement map with neutral gray (128 = no displacement)
+    dispmap_padded = cv2.copyMakeBorder(
+        dispmap_region, pad, pad, pad, pad,
+        cv2.BORDER_CONSTANT,
+        value=128
+    )
+
+    # Get padded dimensions
+    padded_height, padded_width = design_padded.shape[:2]
+
+    # Create coordinate grids for padded size
+    y_coords, x_coords = np.mgrid[0:padded_height, 0:padded_width].astype(np.float32)
 
     # Calculate displacement offsets
     # 128 (50% gray) = no displacement
     # 0 (black) = -strength displacement
     # 255 (white) = +strength displacement
-    offsets = (dispmap_region.astype(np.float32) - 128.0) / 128.0 * strength
+    offsets = (dispmap_padded.astype(np.float32) - 128.0) / 128.0 * strength
 
     # Apply offsets to both X and Y coordinates
     # This creates the "fabric fold" effect
@@ -76,16 +108,24 @@ def apply_displacement(design, dispmap_region, strength=15):
     map_y = y_coords + offsets
 
     # Remap with BICUBIC interpolation (high quality, smooth results)
-    # BORDER_REFLECT prevents edge artifacts
-    displaced = cv2.remap(
-        design,
+    # BORDER_CONSTANT with transparent/black for clean edges
+    if design.shape[2] == 4:
+        border_value = (0, 0, 0, 0)
+    else:
+        border_value = (0, 0, 0)
+
+    displaced_padded = cv2.remap(
+        design_padded,
         map_x,
         map_y,
         interpolation=cv2.INTER_CUBIC,
-        borderMode=cv2.BORDER_REFLECT
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border_value
     )
 
-    return displaced
+    # Return the padded result (edges now warp into the padding area)
+    # We keep the padding so warped edges are visible
+    return displaced_padded, pad
 
 
 def apply_displacement_directional(design, dispmap_region, strength_x=15, strength_y=15):
@@ -296,22 +336,26 @@ def generate_mockup(base_img, design_img, position, scale=1.0, rotation=0,
 
     # Step 5: Apply displacement to design using the correct region of dispmap
     if dispmap_region.size > 0 and design_cropped.size > 0:
-        design_displaced = apply_displacement(
+        design_displaced, pad = apply_displacement(
             design_cropped,
             dispmap_region,
             strength=displacement_strength
         )
 
-        # Reconstruct full design with displaced center
-        design_final = design_processed.copy()
-        design_final[
-            design_crop_y:design_crop_y + design_displaced.shape[0],
-            design_crop_x:design_crop_x + design_displaced.shape[1]
-        ] = design_displaced
+        # Adjust position to account for padding
+        # The displaced image is larger due to padding, so we offset the position
+        adjusted_x = x - pad + design_crop_x
+        adjusted_y = y - pad + design_crop_y
+
+        # Use the displaced (padded) design directly
+        design_final = design_displaced
     else:
         design_final = design_processed
+        adjusted_x = x
+        adjusted_y = y
+        pad = 0
 
     # Step 6: Composite displaced design onto base
-    result = composite_on_base(base_img, design_final, (x, y), blend_mode=blend_mode)
+    result = composite_on_base(base_img, design_final, (adjusted_x, adjusted_y), blend_mode=blend_mode)
 
     return result
