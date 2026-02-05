@@ -334,9 +334,10 @@ def generate_mockup(base_img, design_img, position, scale=1.0, rotation=0,
         )
 
         # Adjust position to account for padding
-        # The displaced image is larger due to padding, so we offset the position
-        adjusted_x = x - pad + design_crop_x
-        adjusted_y = y - pad + design_crop_y
+        # Padding is added equally on all sides, so we subtract pad from position
+        # to keep the design center in the same place
+        adjusted_x = disp_x_start - pad
+        adjusted_y = disp_y_start - pad
 
         # Use the displaced (padded) design directly
         design_final = design_displaced
@@ -344,7 +345,6 @@ def generate_mockup(base_img, design_img, position, scale=1.0, rotation=0,
         design_final = design_processed
         adjusted_x = x
         adjusted_y = y
-        pad = 0
 
     # Step 6: Composite displaced design onto base
     result = composite_on_base(base_img, design_final, (adjusted_x, adjusted_y), blend_mode=blend_mode)
