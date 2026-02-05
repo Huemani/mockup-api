@@ -74,64 +74,42 @@ def download_image(url, timeout=15):
         raise ValueError(f"Failed to download image: {str(e)}")
 
 
-def transform_base_image(base_img, base_position, base_scale, canvas_width, canvas_height):
+def calculate_viewport_offset(base_position, base_scale, canvas_width, canvas_height, orig_w, orig_h):
     """
-    Transform base image according to position and scale from frontend.
+    Calculate where the canvas viewport sits on the scaled base image.
 
-    This crops/scales the base image to match what the user sees in the canvas.
+    Returns the offset from the top-left of the scaled base image to the
+    top-left of the visible canvas area.
 
     Args:
-        base_img: Original base image
         base_position: Dict with 'x' and 'y' offset from center
         base_scale: Scale factor for base image
         canvas_width: Canvas width in pixels
         canvas_height: Canvas height in pixels
+        orig_w: Original base image width
+        orig_h: Original base image height
 
     Returns:
-        Transformed base image matching canvas view
+        Tuple (viewport_x, viewport_y) - offset to canvas viewport
     """
-    if not canvas_width or not canvas_height:
-        return base_img
+    # Scaled base image dimensions
+    scaled_w = orig_w * base_scale
+    scaled_h = orig_h * base_scale
 
-    orig_h, orig_w = base_img.shape[:2]
+    # Center of scaled base image
+    center_x = scaled_w / 2
+    center_y = scaled_h / 2
 
-    # Calculate the scaled dimensions
-    scaled_w = int(orig_w * base_scale)
-    scaled_h = int(orig_h * base_scale)
+    # Apply base position offset (shifts the image, so viewport shifts opposite)
+    # If basePosition.x is positive, image moves right, viewport sees more of the left
+    viewport_center_x = center_x - base_position.get('x', 0)
+    viewport_center_y = center_y - base_position.get('y', 0)
 
-    # Scale the base image
-    if base_scale != 1.0:
-        base_img_scaled = cv2.resize(base_img, (scaled_w, scaled_h), interpolation=cv2.INTER_CUBIC)
-    else:
-        base_img_scaled = base_img
+    # Calculate top-left of viewport
+    viewport_x = viewport_center_x - canvas_width / 2
+    viewport_y = viewport_center_y - canvas_height / 2
 
-    # Calculate the visible region based on position offset
-    # Position is offset from center
-    center_x = scaled_w / 2 + base_position.get('x', 0)
-    center_y = scaled_h / 2 + base_position.get('y', 0)
-
-    # Calculate crop region (what's visible in canvas)
-    # We want to extract a region that matches the canvas aspect ratio
-    crop_w = min(scaled_w, int(canvas_width * (scaled_w / canvas_width)))
-    crop_h = min(scaled_h, int(canvas_height * (scaled_h / canvas_height)))
-
-    # Use the full scaled image but positioned correctly
-    # The canvas shows a portion of the scaled image
-    x1 = int(center_x - canvas_width / 2 * (scaled_w / canvas_width))
-    y1 = int(center_y - canvas_height / 2 * (scaled_h / canvas_height))
-
-    # Clamp to valid bounds
-    x1 = max(0, min(x1, scaled_w - 1))
-    y1 = max(0, min(y1, scaled_h - 1))
-    x2 = min(scaled_w, x1 + int(canvas_width * (scaled_w / canvas_width)))
-    y2 = min(scaled_h, y1 + int(canvas_height * (scaled_h / canvas_height)))
-
-    # Crop the visible region
-    cropped = base_img_scaled[y1:y2, x1:x2]
-
-    logger.info(f"Base transform: scale={base_scale}, pos=({base_position}), crop=({x1},{y1})-({x2},{y2})")
-
-    return cropped
+    return viewport_x, viewport_y
 
 
 def validate_request(data):
@@ -266,47 +244,49 @@ def generate_mockup_endpoint():
         canvas_width = data.get('canvasWidth')
         canvas_height = data.get('canvasHeight')
 
-        # Apply base image transformation (scale and position)
-        base_img = transform_base_image(
-            base_img_original,
-            base_position,
-            base_scale,
-            canvas_width,
-            canvas_height
-        )
+        # Get original base image dimensions
+        orig_h, orig_w = base_img_original.shape[:2]
 
-        # Get transformed base image dimensions
+        # Scale base image if needed (but don't crop!)
+        if base_scale != 1.0:
+            new_w = int(orig_w * base_scale)
+            new_h = int(orig_h * base_scale)
+            base_img = cv2.resize(base_img_original, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            logger.info(f"Scaled base image: {orig_w}x{orig_h} -> {new_w}x{new_h}")
+        else:
+            base_img = base_img_original.copy()
+
         base_h, base_w = base_img.shape[:2]
-        logger.info(f"Base image after transform: {base_w}x{base_h}")
 
-        # If canvas dimensions provided, position is offset from center
-        # Convert to absolute top-left position, scaled to actual image size
+        # If canvas dimensions provided, calculate design position
         if canvas_width and canvas_height:
-            # Calculate scale ratio between transformed base image and canvas
-            scale_ratio_x = base_w / canvas_width
-            scale_ratio_y = base_h / canvas_height
+            # Calculate where the viewport sits on the scaled base image
+            viewport_x, viewport_y = calculate_viewport_offset(
+                base_position, base_scale, canvas_width, canvas_height, orig_w, orig_h
+            )
 
-            logger.info(f"Canvas: {canvas_width}x{canvas_height}, Base: {base_w}x{base_h}, Ratio: {scale_ratio_x:.2f}x{scale_ratio_y:.2f}")
+            logger.info(f"Viewport offset on base: ({viewport_x:.1f}, {viewport_y:.1f})")
 
-            # Get design dimensions after scaling
+            # Design position is relative to canvas center
+            # Convert to position on the full base image
             design_h, design_w = design_img.shape[:2]
-            design_scaled_w = int(design_w * scale * scale_ratio_x)
-            design_scaled_h = int(design_h * scale * scale_ratio_y)
+            design_scaled_w = int(design_w * scale)
+            design_scaled_h = int(design_h * scale)
 
-            # Scale the design offset position to actual image coordinates
-            offset_x_scaled = position['x'] * scale_ratio_x
-            offset_y_scaled = position['y'] * scale_ratio_y
+            # Design center in canvas coordinates
+            design_center_canvas_x = canvas_width / 2 + position['x']
+            design_center_canvas_y = canvas_height / 2 + position['y']
 
-            # Calculate absolute position (top-left corner) on transformed base image
-            # Center of base image + scaled offset - half of scaled design size
-            abs_x = int(base_w / 2 + offset_x_scaled - design_scaled_w / 2)
-            abs_y = int(base_h / 2 + offset_y_scaled - design_scaled_h / 2)
+            # Convert to base image coordinates
+            design_center_base_x = viewport_x + design_center_canvas_x
+            design_center_base_y = viewport_y + design_center_canvas_y
 
-            # Also scale the design scale factor to match image resolution
-            scale = scale * ((scale_ratio_x + scale_ratio_y) / 2)
+            # Calculate top-left position
+            abs_x = int(design_center_base_x - design_scaled_w / 2)
+            abs_y = int(design_center_base_y - design_scaled_h / 2)
 
             position = {'x': abs_x, 'y': abs_y}
-            logger.info(f"Design position: ({abs_x}, {abs_y}), adjusted scale: {scale:.2f}")
+            logger.info(f"Design position on base: ({abs_x}, {abs_y}), scale: {scale:.2f}")
 
         # Generate mockup
         logger.info("Generating mockup with displacement...")
