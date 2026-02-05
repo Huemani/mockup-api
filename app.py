@@ -202,21 +202,37 @@ def generate_mockup_endpoint():
         canvas_width = data.get('canvasWidth')
         canvas_height = data.get('canvasHeight')
 
+        # Get actual base image dimensions
+        base_h, base_w = base_img.shape[:2]
+
         # If canvas dimensions provided, position is offset from center
-        # Convert to absolute top-left position
+        # Convert to absolute top-left position, scaled to actual image size
         if canvas_width and canvas_height:
+            # Calculate scale ratio between actual image and canvas
+            scale_ratio_x = base_w / canvas_width
+            scale_ratio_y = base_h / canvas_height
+
+            logger.info(f"Canvas: {canvas_width}x{canvas_height}, Image: {base_w}x{base_h}, Ratio: {scale_ratio_x:.2f}x{scale_ratio_y:.2f}")
+
             # Get design dimensions after scaling
             design_h, design_w = design_img.shape[:2]
-            scaled_w = int(design_w * scale)
-            scaled_h = int(design_h * scale)
+            scaled_w = int(design_w * scale * scale_ratio_x)
+            scaled_h = int(design_h * scale * scale_ratio_y)
 
-            # Calculate absolute position (top-left corner)
-            # Center of canvas + offset - half of design size
-            abs_x = int(canvas_width / 2 + position['x'] - scaled_w / 2)
-            abs_y = int(canvas_height / 2 + position['y'] - scaled_h / 2)
+            # Scale the offset position to actual image coordinates
+            offset_x_scaled = position['x'] * scale_ratio_x
+            offset_y_scaled = position['y'] * scale_ratio_y
+
+            # Calculate absolute position (top-left corner) on actual image
+            # Center of actual image + scaled offset - half of scaled design size
+            abs_x = int(base_w / 2 + offset_x_scaled - scaled_w / 2)
+            abs_y = int(base_h / 2 + offset_y_scaled - scaled_h / 2)
+
+            # Also scale the design scale factor
+            scale = scale * ((scale_ratio_x + scale_ratio_y) / 2)
 
             position = {'x': abs_x, 'y': abs_y}
-            logger.info(f"Converted center offset to absolute: ({abs_x}, {abs_y})")
+            logger.info(f"Converted center offset to absolute: ({abs_x}, {abs_y}), adjusted scale: {scale:.2f}")
 
         # Generate mockup
         logger.info("Generating mockup with displacement...")
