@@ -122,7 +122,9 @@ def index():
         'documentation': {
             'baseImageUrl': 'URL to base t-shirt image',
             'designImageUrl': 'URL to design/logo image (PNG with transparency recommended)',
-            'position': {'x': 'number', 'y': 'number'},
+            'position': {'x': 'offset from center', 'y': 'offset from center'},
+            'canvasWidth': 'canvas width in pixels (required for center-based positioning)',
+            'canvasHeight': 'canvas height in pixels (required for center-based positioning)',
             'scale': 'number (default: 1.0)',
             'rotation': 'number in degrees (default: 0)',
             'displacementStrength': 'number 0-100 (default: 15)',
@@ -195,6 +197,26 @@ def generate_mockup_endpoint():
         rotation = data.get('rotation', 0)
         displacement_strength = data.get('displacementStrength', 15)
         blend_mode = data.get('blendMode', 'normal')
+
+        # Canvas dimensions (for center-based positioning)
+        canvas_width = data.get('canvasWidth')
+        canvas_height = data.get('canvasHeight')
+
+        # If canvas dimensions provided, position is offset from center
+        # Convert to absolute top-left position
+        if canvas_width and canvas_height:
+            # Get design dimensions after scaling
+            design_h, design_w = design_img.shape[:2]
+            scaled_w = int(design_w * scale)
+            scaled_h = int(design_h * scale)
+
+            # Calculate absolute position (top-left corner)
+            # Center of canvas + offset - half of design size
+            abs_x = int(canvas_width / 2 + position['x'] - scaled_w / 2)
+            abs_y = int(canvas_height / 2 + position['y'] - scaled_h / 2)
+
+            position = {'x': abs_x, 'y': abs_y}
+            logger.info(f"Converted center offset to absolute: ({abs_x}, {abs_y})")
 
         # Generate mockup
         logger.info("Generating mockup with displacement...")
