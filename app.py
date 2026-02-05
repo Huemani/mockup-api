@@ -74,6 +74,66 @@ def download_image(url, timeout=15):
         raise ValueError(f"Failed to download image: {str(e)}")
 
 
+def transform_base_image(base_img, base_position, base_scale, canvas_width, canvas_height):
+    """
+    Transform base image according to position and scale from frontend.
+
+    This crops/scales the base image to match what the user sees in the canvas.
+
+    Args:
+        base_img: Original base image
+        base_position: Dict with 'x' and 'y' offset from center
+        base_scale: Scale factor for base image
+        canvas_width: Canvas width in pixels
+        canvas_height: Canvas height in pixels
+
+    Returns:
+        Transformed base image matching canvas view
+    """
+    if not canvas_width or not canvas_height:
+        return base_img
+
+    orig_h, orig_w = base_img.shape[:2]
+
+    # Calculate the scaled dimensions
+    scaled_w = int(orig_w * base_scale)
+    scaled_h = int(orig_h * base_scale)
+
+    # Scale the base image
+    if base_scale != 1.0:
+        base_img_scaled = cv2.resize(base_img, (scaled_w, scaled_h), interpolation=cv2.INTER_CUBIC)
+    else:
+        base_img_scaled = base_img
+
+    # Calculate the visible region based on position offset
+    # Position is offset from center
+    center_x = scaled_w / 2 + base_position.get('x', 0)
+    center_y = scaled_h / 2 + base_position.get('y', 0)
+
+    # Calculate crop region (what's visible in canvas)
+    # We want to extract a region that matches the canvas aspect ratio
+    crop_w = min(scaled_w, int(canvas_width * (scaled_w / canvas_width)))
+    crop_h = min(scaled_h, int(canvas_height * (scaled_h / canvas_height)))
+
+    # Use the full scaled image but positioned correctly
+    # The canvas shows a portion of the scaled image
+    x1 = int(center_x - canvas_width / 2 * (scaled_w / canvas_width))
+    y1 = int(center_y - canvas_height / 2 * (scaled_h / canvas_height))
+
+    # Clamp to valid bounds
+    x1 = max(0, min(x1, scaled_w - 1))
+    y1 = max(0, min(y1, scaled_h - 1))
+    x2 = min(scaled_w, x1 + int(canvas_width * (scaled_w / canvas_width)))
+    y2 = min(scaled_h, y1 + int(canvas_height * (scaled_h / canvas_height)))
+
+    # Crop the visible region
+    cropped = base_img_scaled[y1:y2, x1:x2]
+
+    logger.info(f"Base transform: scale={base_scale}, pos=({base_position}), crop=({x1},{y1})-({x2},{y2})")
+
+    return cropped
+
+
 def validate_request(data):
     """
     Validate incoming request data.
@@ -188,7 +248,7 @@ def generate_mockup_endpoint():
                     f"scale={data.get('scale', 1.0)}, strength={data.get('displacementStrength', 15)}")
 
         # Download images
-        base_img = download_image(data['baseImageUrl'])
+        base_img_original = download_image(data['baseImageUrl'])
         design_img = download_image(data['designImageUrl'])
 
         # Extract parameters with defaults
@@ -198,41 +258,55 @@ def generate_mockup_endpoint():
         displacement_strength = data.get('displacementStrength', 15)
         blend_mode = data.get('blendMode', 'normal')
 
+        # Base image positioning parameters
+        base_position = data.get('basePosition', {'x': 0, 'y': 0})
+        base_scale = data.get('baseScale', 1.0)
+
         # Canvas dimensions (for center-based positioning)
         canvas_width = data.get('canvasWidth')
         canvas_height = data.get('canvasHeight')
 
-        # Get actual base image dimensions
+        # Apply base image transformation (scale and position)
+        base_img = transform_base_image(
+            base_img_original,
+            base_position,
+            base_scale,
+            canvas_width,
+            canvas_height
+        )
+
+        # Get transformed base image dimensions
         base_h, base_w = base_img.shape[:2]
+        logger.info(f"Base image after transform: {base_w}x{base_h}")
 
         # If canvas dimensions provided, position is offset from center
         # Convert to absolute top-left position, scaled to actual image size
         if canvas_width and canvas_height:
-            # Calculate scale ratio between actual image and canvas
+            # Calculate scale ratio between transformed base image and canvas
             scale_ratio_x = base_w / canvas_width
             scale_ratio_y = base_h / canvas_height
 
-            logger.info(f"Canvas: {canvas_width}x{canvas_height}, Image: {base_w}x{base_h}, Ratio: {scale_ratio_x:.2f}x{scale_ratio_y:.2f}")
+            logger.info(f"Canvas: {canvas_width}x{canvas_height}, Base: {base_w}x{base_h}, Ratio: {scale_ratio_x:.2f}x{scale_ratio_y:.2f}")
 
             # Get design dimensions after scaling
             design_h, design_w = design_img.shape[:2]
-            scaled_w = int(design_w * scale * scale_ratio_x)
-            scaled_h = int(design_h * scale * scale_ratio_y)
+            design_scaled_w = int(design_w * scale * scale_ratio_x)
+            design_scaled_h = int(design_h * scale * scale_ratio_y)
 
-            # Scale the offset position to actual image coordinates
+            # Scale the design offset position to actual image coordinates
             offset_x_scaled = position['x'] * scale_ratio_x
             offset_y_scaled = position['y'] * scale_ratio_y
 
-            # Calculate absolute position (top-left corner) on actual image
-            # Center of actual image + scaled offset - half of scaled design size
-            abs_x = int(base_w / 2 + offset_x_scaled - scaled_w / 2)
-            abs_y = int(base_h / 2 + offset_y_scaled - scaled_h / 2)
+            # Calculate absolute position (top-left corner) on transformed base image
+            # Center of base image + scaled offset - half of scaled design size
+            abs_x = int(base_w / 2 + offset_x_scaled - design_scaled_w / 2)
+            abs_y = int(base_h / 2 + offset_y_scaled - design_scaled_h / 2)
 
-            # Also scale the design scale factor
+            # Also scale the design scale factor to match image resolution
             scale = scale * ((scale_ratio_x + scale_ratio_y) / 2)
 
             position = {'x': abs_x, 'y': abs_y}
-            logger.info(f"Converted center offset to absolute: ({abs_x}, {abs_y}), adjusted scale: {scale:.2f}")
+            logger.info(f"Design position: ({abs_x}, {abs_y}), adjusted scale: {scale:.2f}")
 
         # Generate mockup
         logger.info("Generating mockup with displacement...")
