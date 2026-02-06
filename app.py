@@ -130,15 +130,11 @@ def generate_mockup_endpoint():
         design_url = data.get('designImageUrl')
         position = data.get('position', {'x': 0, 'y': 0})
         
-        # CRITICAL FIX: Scale conversion
-        # Frontend sends scale as decimal: 0.22 = 22%
-        # Backend needs Photoshop percent: 22 (not 0.22)
-        scale_decimal = data.get('scale', 0.22)  # Default 22%
-        displacement_scale = scale_decimal * 100  # Convert: 0.22 → 22
-        
-        # Clamp to reasonable Photoshop range
-        # Typical: 5-15%, but allow 1-50% for flexibility
-        displacement_scale = max(1, min(50, displacement_scale))
+        # CRITICAL FIX: Hardcoded displacement scale
+        # Frontend sends incorrect scale values, so we use a fixed optimal value
+        # This gives natural fabric displacement without distortion
+        scale_decimal = data.get('scale', 0.22)  # Still log what frontend sends
+        displacement_scale = 15  # HARDCODED: Optimal value for fabric texture (10-20% range is good)
         
         logger.info(f"Processing mockup request: position={position}, scale={scale_decimal}, displacement_scale={displacement_scale}")
         
