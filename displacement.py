@@ -27,13 +27,14 @@ def create_displacement_map(base_img):
     # Convert to grayscale
     gray = cv2.cvtColor(base_img, cv2.COLOR_BGR2GRAY)
     
-    # Apply Gaussian blur (mimics Photoshop blur for smooth displacement)
-    # Kernel size should be odd
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # Apply LARGE Gaussian blur for smooth fabric-like displacement
+    # Photoshop typically uses blur radius 20-50 pixels for fabric texture
+    # Kernel size must be odd: 51x51 with sigma=20 gives smooth, natural results
+    blurred = cv2.GaussianBlur(gray, (51, 51), 20)
     
-    # Enhance contrast using CLAHE
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(blurred)
+    # Simple contrast enhancement (no CLAHE - it creates patchy artifacts)
+    # Alpha=1.5 increases contrast, beta=-50 darkens slightly for better range
+    enhanced = cv2.convertScaleAbs(blurred, alpha=1.5, beta=-50)
     
     return enhanced
 
@@ -99,10 +100,11 @@ def apply_displacement(design, dispmap_region, scale=10):
     # 255 (white) = +scale displacement
     offsets = (dispmap_padded.astype(np.float32) - 128.0) * (scale / 100.0) * 2
     
-    # Apply offsets to both X and Y coordinates
-    # This creates the "fabric fold" effect
-    map_x = x_coords + offsets
-    map_y = y_coords + offsets
+    # Apply offsets ONLY HORIZONTALLY (standard for fabric texture)
+    # Vertical displacement creates unrealistic "melting" effect
+    # Horizontal displacement follows natural fabric wrinkles
+    map_x = x_coords + offsets  # Horizontal displacement
+    map_y = y_coords            # NO vertical displacement
     
     # Remap with BICUBIC interpolation (high quality, smooth results)
     # BORDER_CONSTANT with transparent pixels for clean edges
