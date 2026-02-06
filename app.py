@@ -1,7 +1,7 @@
 """
 Mockup Displacement API
 
-Flask API for generating photorealistic t-shirt mockups using
+Flask API for generating photorealistic t-shirt mockups using 
 OpenCV displacement mapping (Photoshop-style quality).
 """
 
@@ -23,152 +23,36 @@ from displacement import generate_mockup, create_displacement_map
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for Lovable frontend
+CORS(app)
 
-# Configuration
-OUTPUT_DIR = os.environ.get('OUTPUT_DIR', '/tmp/outputs')
-MAX_IMAGE_SIZE = 4000  # Max dimension in pixels
-REQUEST_TIMEOUT = 30  # Seconds
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# Create output directory
+os.makedirs('/tmp/outputs', exist_ok=True)
 
 
-def download_image(url, timeout=15):
+def download_image(url):
     """
-    Download image from URL and decode to OpenCV format.
-
+    Download image from URL and convert to OpenCV format.
+    
     Args:
-        url: Image URL
-        timeout: Request timeout in seconds
-
+        url: Image URL (Cloudinary or other)
+        
     Returns:
-        OpenCV image (BGR or BGRA)
-
-    Raises:
-        ValueError: If download or decode fails
+        OpenCV image (BGR numpy array)
     """
-    try:
-        logger.info(f"Downloading: {url[:80]}...")
-        response = requests.get(url, timeout=timeout)
-        response.raise_for_status()
-
-        # Decode image from bytes
-        img_array = np.frombuffer(response.content, np.uint8)
-
-        # Try to decode with alpha channel first (for PNG transparency)
-        img = cv2.imdecode(img_array, cv2.IMREAD_UNCHANGED)
-
-        if img is None:
-            raise ValueError(f"Failed to decode image from URL: {url}")
-
-        # Convert RGBA to BGRA if needed (OpenCV uses BGR order)
-        if len(img.shape) == 2:
-            # Grayscale, convert to BGR
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-        logger.info(f"Downloaded image: {img.shape}")
-        return img
-
-    except requests.RequestException as e:
-        raise ValueError(f"Failed to download image: {str(e)}")
-
-
-def calculate_viewport_offset(base_position, base_scale, canvas_width, canvas_height, orig_w, orig_h):
-    """
-    Calculate where the canvas viewport sits on the scaled base image.
-
-    Returns the offset from the top-left of the scaled base image to the
-    top-left of the visible canvas area.
-
-    Args:
-        base_position: Dict with 'x' and 'y' offset from center
-        base_scale: Scale factor for base image
-        canvas_width: Canvas width in pixels
-        canvas_height: Canvas height in pixels
-        orig_w: Original base image width
-        orig_h: Original base image height
-
-    Returns:
-        Tuple (viewport_x, viewport_y) - offset to canvas viewport
-    """
-    # Scaled base image dimensions
-    scaled_w = orig_w * base_scale
-    scaled_h = orig_h * base_scale
-
-    # Center of scaled base image
-    center_x = scaled_w / 2
-    center_y = scaled_h / 2
-
-    # Apply base position offset (shifts the image, so viewport shifts opposite)
-    # If basePosition.x is positive, image moves right, viewport sees more of the left
-    viewport_center_x = center_x - base_position.get('x', 0)
-    viewport_center_y = center_y - base_position.get('y', 0)
-
-    # Calculate top-left of viewport
-    viewport_x = viewport_center_x - canvas_width / 2
-    viewport_y = viewport_center_y - canvas_height / 2
-
-    return viewport_x, viewport_y
-
-
-def validate_request(data):
-    """
-    Validate incoming request data.
-
-    Args:
-        data: Request JSON data
-
-    Returns:
-        Tuple (is_valid, error_message)
-    """
-    required_fields = ['baseImageUrl', 'designImageUrl', 'position']
-
-    for field in required_fields:
-        if field not in data:
-            return False, f"Missing required field: {field}"
-
-    position = data['position']
-    if not isinstance(position, dict) or 'x' not in position or 'y' not in position:
-        return False, "Position must be an object with 'x' and 'y' properties"
-
-    if not isinstance(position['x'], (int, float)) or not isinstance(position['y'], (int, float)):
-        return False, "Position x and y must be numbers"
-
-    if 'scale' in data and (not isinstance(data['scale'], (int, float)) or data['scale'] <= 0):
-        return False, "Scale must be a positive number"
-
-    if 'displacementStrength' in data:
-        strength = data['displacementStrength']
-        if not isinstance(strength, (int, float)) or strength < 0 or strength > 100:
-            return False, "displacementStrength must be between 0 and 100"
-
-    return True, None
-
-
-@app.route('/', methods=['GET'])
-def index():
-    """API info endpoint."""
-    return jsonify({
-        'name': 'Mockup Displacement API',
-        'version': '1.0.0',
-        'endpoints': {
-            'POST /generate-mockup': 'Generate a displacement mockup',
-            'GET /output/<filename>': 'Retrieve generated mockup',
-            'GET /health': 'Health check'
-        },
-        'documentation': {
-            'baseImageUrl': 'URL to base t-shirt image',
-            'designImageUrl': 'URL to design/logo image (PNG with transparency recommended)',
-            'position': {'x': 'offset from center', 'y': 'offset from center'},
-            'canvasWidth': 'canvas width in pixels (required for center-based positioning)',
-            'canvasHeight': 'canvas height in pixels (required for center-based positioning)',
-            'scale': 'number (default: 1.0)',
-            'rotation': 'number in degrees (default: 0)',
-            'displacementStrength': 'number 0-100 (default: 15)',
-            'blendMode': '"normal" or "multiply" (default: "normal")'
-        }
-    })
+    logger.info(f"Downloading image from: {url}")
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    
+    # Decode image
+    img_array = np.asarray(bytearray(response.content), dtype=np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_UNCHANGED)
+    
+    if img is None:
+        raise ValueError(f"Failed to decode image from {url}")
+    
+    logger.info(f"Image downloaded: {img.shape}")
+    return img
 
 
 @app.route('/health', methods=['GET'])
@@ -176,240 +60,205 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
+        'service': 'mockup-displacement-api',
         'timestamp': time.time()
     })
+
+
+@app.route('/create-displacement-map', methods=['POST'])
+def create_displacement_map_endpoint():
+    """
+    Generate a displacement map from a base image.
+    
+    Request JSON:
+        {
+            "imageUrl": "https://..."
+        }
+    
+    Returns:
+        Base64-encoded grayscale displacement map
+    """
+    try:
+        data = request.get_json()
+        image_url = data.get('imageUrl')
+        
+        if not image_url:
+            return jsonify({'success': False, 'error': 'imageUrl required'}), 400
+        
+        logger.info(f"Creating displacement map for: {image_url}")
+        
+        # Download image
+        img = download_image(image_url)
+        
+        # Generate displacement map
+        dispmap = create_displacement_map(img)
+        
+        # Save as PNG
+        output_path = f"/tmp/outputs/dispmap_{uuid.uuid4().hex[:8]}.png"
+        cv2.imwrite(output_path, dispmap)
+        
+        logger.info(f"Displacement map saved: {output_path}")
+        
+        return send_file(output_path, mimetype='image/png')
+        
+    except Exception as e:
+        logger.error(f"Error creating displacement map: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/generate-mockup', methods=['POST'])
 def generate_mockup_endpoint():
     """
     Generate a mockup with displacement mapping.
-
-    Request body (JSON):
-    {
-        "baseImageUrl": "https://...",
-        "designImageUrl": "https://...",
-        "position": {"x": 150, "y": 200},
-        "scale": 0.8,
-        "rotation": 0,
-        "displacementStrength": 15,
-        "blendMode": "normal"
-    }
-
-    Response:
-    {
-        "success": true,
-        "mockupUrl": "https://..../output/abc123.jpg",
-        "processingTime": 0.8
-    }
+    
+    Request JSON:
+        {
+            "baseImageUrl": "https://...",
+            "designImageUrl": "https://...",
+            "position": {"x": 100, "y": 200},
+            "scale": 0.22  // Frontend sends as decimal (0.22 = 22%)
+        }
+    
+    Returns:
+        Base64-encoded JPEG mockup image
     """
-    start_time = time.time()
-
     try:
-        # Parse JSON body
         data = request.get_json()
-        if not data:
+        
+        # Get parameters
+        base_url = data.get('baseImageUrl')
+        design_url = data.get('designImageUrl')
+        position = data.get('position', {'x': 0, 'y': 0})
+        
+        # CRITICAL FIX: Scale conversion
+        # Frontend sends scale as decimal: 0.22 = 22%
+        # Backend needs Photoshop percent: 22 (not 0.22)
+        scale_decimal = data.get('scale', 0.22)  # Default 22%
+        displacement_scale = scale_decimal * 100  # Convert: 0.22 → 22
+        
+        # Clamp to reasonable Photoshop range
+        # Typical: 5-15%, but allow 1-50% for flexibility
+        displacement_scale = max(1, min(50, displacement_scale))
+        
+        logger.info(f"Processing mockup request: position={position}, scale={scale_decimal}, displacement_scale={displacement_scale}")
+        
+        # Validate inputs
+        if not base_url or not design_url:
             return jsonify({
-                'success': False,
-                'error': 'Request body must be JSON'
+                'success': False, 
+                'error': 'baseImageUrl and designImageUrl required'
             }), 400
-
-        # Validate request
-        is_valid, error_message = validate_request(data)
-        if not is_valid:
-            return jsonify({
-                'success': False,
-                'error': error_message
-            }), 400
-
-        logger.info(f"Processing mockup request: position={data['position']}, "
-                    f"scale={data.get('scale', 1.0)}, strength={data.get('displacementStrength', 15)}")
-
+        
         # Download images
-        base_img_original = download_image(data['baseImageUrl'])
-        design_img = download_image(data['designImageUrl'])
-
-        # Extract parameters with defaults
-        position = data['position']
-        scale = data.get('scale', 1.0)
-        rotation = data.get('rotation', 0)
-        displacement_strength = data.get('displacementStrength', 15)
-        blend_mode = data.get('blendMode', 'normal')
-
-        # Base image positioning parameters
-        base_position = data.get('basePosition', {'x': 0, 'y': 0})
-        base_scale = data.get('baseScale', 1.0)
-
-        # Canvas dimensions (for center-based positioning)
-        canvas_width = data.get('canvasWidth')
-        canvas_height = data.get('canvasHeight')
-
-        # Get original base image dimensions
-        orig_h, orig_w = base_img_original.shape[:2]
-
-        # Scale base image if needed (but don't crop!)
-        if base_scale != 1.0:
-            new_w = int(orig_w * base_scale)
-            new_h = int(orig_h * base_scale)
-            base_img = cv2.resize(base_img_original, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-            logger.info(f"Scaled base image: {orig_w}x{orig_h} -> {new_w}x{new_h}")
-        else:
-            base_img = base_img_original.copy()
-
+        logger.info(f"Downloading base image: {base_url}")
+        base_img = download_image(base_url)
+        logger.info(f"Base image shape: {base_img.shape}")
+        
+        logger.info(f"Downloading design image: {design_url}")
+        design_img = download_image(design_url)
+        logger.info(f"Design image shape: {design_img.shape}")
+        
+        # Scale base image if too large (performance optimization)
         base_h, base_w = base_img.shape[:2]
-
-        # If canvas dimensions provided, calculate design position
-        if canvas_width and canvas_height:
-            # Calculate where the viewport sits on the scaled base image
-            viewport_x, viewport_y = calculate_viewport_offset(
-                base_position, base_scale, canvas_width, canvas_height, orig_w, orig_h
+        max_dimension = 2000
+        
+        if max(base_h, base_w) > max_dimension:
+            scale_factor = max_dimension / max(base_h, base_w)
+            new_w = int(base_w * scale_factor)
+            new_h = int(base_h * scale_factor)
+            
+            base_img = cv2.resize(
+                base_img, 
+                (new_w, new_h), 
+                interpolation=cv2.INTER_AREA
             )
-
-            logger.info(f"Viewport offset on base: ({viewport_x:.1f}, {viewport_y:.1f})")
-
-            # Design position is relative to canvas center
-            # Convert to position on the full base image
+            logger.info(f"Scaled base image: {base_w}x{base_h} -> {new_w}x{new_h}")
+            
+            # Scale position coordinates proportionally
+            position['x'] = int(position['x'] * scale_factor)
+            position['y'] = int(position['y'] * scale_factor)
+            
+            # Scale design image proportionally
             design_h, design_w = design_img.shape[:2]
-            design_scaled_w = int(design_w * scale)
-            design_scaled_h = int(design_h * scale)
-
-            # Design center in canvas coordinates
-            design_center_canvas_x = canvas_width / 2 + position['x']
-            design_center_canvas_y = canvas_height / 2 + position['y']
-
-            # Convert to base image coordinates
-            design_center_base_x = viewport_x + design_center_canvas_x
-            design_center_base_y = viewport_y + design_center_canvas_y
-
-            # Calculate top-left position
-            abs_x = int(design_center_base_x - design_scaled_w / 2)
-            abs_y = int(design_center_base_y - design_scaled_h / 2)
-
-            position = {'x': abs_x, 'y': abs_y}
-            logger.info(f"Design position on base: ({abs_x}, {abs_y}), scale: {scale:.2f}")
-
-        # Generate mockup
+            new_design_w = int(design_w * scale_factor)
+            new_design_h = int(design_h * scale_factor)
+            
+            design_img = cv2.resize(
+                design_img,
+                (new_design_w, new_design_h),
+                interpolation=cv2.INTER_AREA
+            )
+            logger.info(f"Scaled design image: {design_w}x{design_h} -> {new_design_w}x{new_design_h}")
+        
+        # Get final dimensions
+        base_h, base_w = base_img.shape[:2]
+        design_h, design_w = design_img.shape[:2]
+        
+        # Log viewport positioning
+        logger.info(f"Viewport offset on base: ({position['x']}, {position['y']})")
+        logger.info(f"Design position on base: ({position['x']}, {position['y']}), scale: {scale_decimal}")
+        
+        # Generate mockup with displacement
         logger.info("Generating mockup with displacement...")
         result = generate_mockup(
-            base_img=base_img,
-            design_img=design_img,
-            position=position,
-            scale=scale,
-            rotation=rotation,
-            displacement_strength=displacement_strength,
-            blend_mode=blend_mode
+            base_img,
+            design_img,
+            (position['x'], position['y']),
+            scale=displacement_scale  # ✅ Photoshop percent (22, not 0.22)
         )
-
-        # Generate unique output filename
-        output_id = str(uuid.uuid4())[:12]
-        output_filename = f'{output_id}.jpg'
-        output_path = os.path.join(OUTPUT_DIR, output_filename)
-
-        # Save result with good quality
-        cv2.imwrite(output_path, result, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        
+        # Save output as JPEG
+        output_path = f"/tmp/outputs/{uuid.uuid4().hex[:8]}.jpg"
+        cv2.imwrite(output_path, result, [cv2.IMWRITE_JPEG_QUALITY, 95])
         logger.info(f"Saved output to: {output_path}")
-
-        # Calculate processing time
-        processing_time = round(time.time() - start_time, 2)
-
-        # Build output URL
-        # Use request.url_root for the base URL
-        base_url = request.url_root.rstrip('/')
-        mockup_url = f"{base_url}/output/{output_filename}"
-
+        
+        # Return as base64-encoded data URL
+        import base64
+        with open(output_path, 'rb') as f:
+            img_base64 = base64.b64encode(f.read()).decode('utf-8')
+        
         return jsonify({
             'success': True,
-            'mockupUrl': mockup_url,
-            'processingTime': processing_time,
-            'outputId': output_id
+            'image': f"data:image/jpeg;base64,{img_base64}"
         })
-
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 400
-
+        
     except Exception as e:
-        logger.exception(f"Unexpected error: {str(e)}")
+        logger.error(f"Error generating mockup: {str(e)}", exc_info=True)
         return jsonify({
-            'success': False,
-            'error': f"Processing error: {str(e)}"
+            'success': False, 
+            'error': str(e)
         }), 500
 
 
-@app.route('/output/<filename>', methods=['GET'])
-def serve_output(filename):
-    """Serve generated mockup images."""
-    filepath = os.path.join(OUTPUT_DIR, filename)
-
-    if not os.path.exists(filepath):
-        return jsonify({
-            'success': False,
-            'error': 'File not found'
-        }), 404
-
-    return send_file(filepath, mimetype='image/jpeg')
-
-
-@app.route('/generate-dispmap', methods=['POST'])
-def generate_dispmap_endpoint():
+@app.route('/test-displacement', methods=['POST'])
+def test_displacement_endpoint():
     """
-    Generate only the displacement map (for debugging/preview).
-
-    Request body (JSON):
-    {
-        "imageUrl": "https://..."
-    }
-
-    Response: JPEG image of displacement map
+    Test endpoint for debugging displacement parameters.
+    
+    Returns displacement info without generating full mockup.
     """
     try:
         data = request.get_json()
-        if not data or 'imageUrl' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Missing imageUrl'
-            }), 400
-
-        # Download and process
-        img = download_image(data['imageUrl'])
-        dispmap = create_displacement_map(img)
-
-        # Encode to JPEG
-        _, buffer = cv2.imencode('.jpg', dispmap)
-        return send_file(
-            BytesIO(buffer.tobytes()),
-            mimetype='image/jpeg'
-        )
-
-    except Exception as e:
+        
+        scale_decimal = data.get('scale', 0.22)
+        displacement_scale = scale_decimal * 100
+        displacement_scale = max(1, min(50, displacement_scale))
+        
         return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-# Cleanup old files (optional, for production)
-def cleanup_old_outputs(max_age_seconds=3600):
-    """Remove output files older than max_age_seconds."""
-    try:
-        now = time.time()
-        for filename in os.listdir(OUTPUT_DIR):
-            filepath = os.path.join(OUTPUT_DIR, filename)
-            if os.path.isfile(filepath):
-                age = now - os.path.getmtime(filepath)
-                if age > max_age_seconds:
-                    os.remove(filepath)
-                    logger.info(f"Cleaned up old file: {filename}")
+            'success': True,
+            'input_scale': scale_decimal,
+            'displacement_scale': displacement_scale,
+            'formula': f"(gray_value - 128) * ({displacement_scale} / 100) * 2",
+            'max_offset_pixels': displacement_scale * 2,
+            'info': 'Photoshop-compatible displacement scale'
+        })
+        
     except Exception as e:
-        logger.error(f"Cleanup error: {e}")
+        logger.error(f"Error in test endpoint: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-
-    logger.info(f"Starting Mockup API on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    # Run Flask app
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
